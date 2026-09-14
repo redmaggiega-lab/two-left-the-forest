@@ -130,6 +130,12 @@ let motes, moonlight;
 
 const input = { x: 0, z: 0, jump: false, jumpEdge: false };
 
+// Walking in alone is a look-around mode, not real play: the puzzles
+// are built for two, so solo gets a jump that clears everything and
+// plates that stay down once you step off them.
+let solo = false;
+function jumpPower() { return solo ? 0.375 : JUMP_V; }
+
 /* -----------------------------------------------------
    Small helpers
    ----------------------------------------------------- */
@@ -468,7 +474,7 @@ function step(p) {
 
   // --- jump ---
   if (input.jumpEdge && (p.onGround || p.coyote > 0)) {
-    p.vy = JUMP_V;
+    p.vy = jumpPower();
     p.onGround = false;
     p.coyote = 0;
   }
@@ -523,7 +529,9 @@ function onPlate(p, plate) {
 
 function updatePuzzles() {
   level.plates.forEach(pl => {
-    const down = onPlate(me, pl) || onPlate(them, pl);
+    let down = onPlate(me, pl) || onPlate(them, pl);
+    if (solo && down) latched["plate:" + pl.id] = true;
+    if (solo && latched["plate:" + pl.id]) down = true;
     pressed[pl.id] = down;
     const pm = plateMeshes[pl.id];
     pm.pad.material.color.setHex(down ? C.plateOn : C.plateOff);
@@ -548,7 +556,7 @@ function updatePuzzles() {
     const e = r.at * r.at * (3 - 2 * r.at);
     r.mesh.position.y = (r.spec.topY - 1.6) - 4 * (1 - e);
 
-    if (worldRef && want && !r.synced) {
+    if (!solo && worldRef && want && !r.synced) {
       r.synced = true;
       worldRef.child(id).set(true);
     }
@@ -569,7 +577,7 @@ function updateHints() {
   if (!goalReached && me &&
       Math.abs(me.x - g.x) < g.r && Math.abs(me.z - g.z) < g.r) {
     goalReached = true;
-    if (roomRef) roomRef.child("reached").set(true);
+    if (!solo && roomRef) roomRef.child("reached").set(true);
     finishChapter();
   }
 }
@@ -663,6 +671,7 @@ function connect(db, room) {
 }
 
 function sendMe(now) {
+  if (solo) return;
   if (!TLF._myRef || now - lastSend < SEND_MS) return;
   lastSend = now;
   TLF._myRef.set({
@@ -791,6 +800,7 @@ function loop() {
    Public entry point
    ----------------------------------------------------- */
 TLF.start = function (opts) {
+  solo       = !!opts.solo;
   mySlot     = opts.slot;
   theirSlot  = opts.slot === "p1" ? "p2" : "p1";
   onChapterEnd = opts.onChapterEnd;
@@ -807,7 +817,12 @@ TLF.start = function (opts) {
   theirRig.group.visible = false;
 
   bindInput();
-  connect(opts.db, opts.room);
+  if (!solo) {
+    connect(opts.db, opts.room);
+  } else {
+    const dot = document.getElementById("link");
+    if (dot) { dot.textContent = "walking alone"; dot.className = "off"; }
+  }
 
   window.addEventListener("resize", () => {
     if (!renderer) return;
